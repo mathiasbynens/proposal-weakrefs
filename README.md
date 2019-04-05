@@ -12,7 +12,7 @@ These interfaces can be used independently or together, depending on the use cas
 ## A note of caution
 
 [Garbage collectors](https://en.wikipedia.org/wiki/Garbage_collection_(computer_science)) are complicated. If an application or library depends on GC cleaning up a WeakRef or calling a finalizer in a timely, predictable manner, it's likely to be disappointed: the cleanup may happen much later than expected, or not at all. Sources of variability include:
-- One object might be garbage collected much sooner than another object, even if they become unreachable at the same time, e.g., due to generational collection.
+- One object might be garbage-collected much sooner than another object, even if they become unreachable at the same time, e.g., due to generational collection.
 - Garbage collection work can be split up over time using incremental and concurrent techniques.
 - Various runtime heuristics can be used to balance memory usage, responsiveness.
 - The JavaScript engine may hold references to things which look like they are unreachable (e.g., in closures, or inline caches).
@@ -28,35 +28,36 @@ A primary use for weak references is to implement caches or mappings holding lar
 
 For example, if you have a number of large binary image objects (e.g. represented as `ArrayBuffer`s), you may wish to associate a name with each image. Existing data structures just don't do what's needed here:
 - If you used a `Map` to map names to images, or images to names, the image objects would remain alive just because they appeared as values or keys in the map.
-- `WeakMap`s are not suitable for this purpose either: They are weak over their *keys*, but in this case, we need a structure which is weak over its *values*.
+- `WeakMap`s are not suitable for this purpose either: they are weak over their *keys*, but in this case, we need a structure which is weak over its *values*.
 
 Instead, we can use a `Map` whose values are `WeakRef` objects, which point to the `ArrayBuffer`. This way, we avoid
 
 ```js
-// This technique is incomplete; see below
-let cache = new Map();
+// This technique is incomplete; see below.
+const cache = new Map();
 function getImageCached(name) {
   let ref = cache.get(name);
   if (ref !== undefined) {
-    let deref = ref.deref();
+    const deref = ref.deref();
     if (deref !== undefined) {
       return deref;
     }
   }
-  let image = getImage(name);
+  const image = getImage(name);
   ref = new WeakRef(image);
   cache.set(name, ref);
   return image;
 }
 ```
 
-This technique can help avoid spending a lot of memory on `ArrayBuffer`s that nobody is looking at anymore, but it still has the problem that, over time, the `Map` will fill up with strings which point to a `WeakRef` whose referent has already been collected. One way to address this is to periodically scavenge the cache and clear out dead entries. Another way will be with finalizers, which we'll come back to at the end of the article:
+This technique can help avoid spending a lot of memory on `ArrayBuffer`s that nobody is looking at anymore, but it still has the problem that, over time, the `Map` will fill up with strings which point to a `WeakRef` whose referent has already been collected. One way to address this is to periodically scavenge the cache and clear out dead entries. Another way is with finalizers, which we’ll come back to at the end of the article.
 
 A few elements of the API are visible in this example:
+
 - The `WeakRef` constructor takes an argument, which has to be an object, and returns a weak reference to it.
 - `WeakRef` instances have a `deref` method that returns one of two values:
-  - The object passed into the constructor, if it's still available
-  - `undefined`, if nothing else was pointing to the object and it was already garbage collected
+  - The object passed into the constructor, if it’s still available.
+  - `undefined`, if nothing else was pointing to the object and it was already garbage-collected.
 
 ## Finalizers
 
@@ -79,7 +80,7 @@ function makeAllocator(size, length) {
 
 function allocate(allocator) {
   const { memory, size, freeList, finalizationGroup } = allocator;
-  if (freeList.length === 0) throw new RangeError("out of memory");
+  if (freeList.length === 0) throw new RangeError('out of memory');
   const index = freeList.shift();
   const buffer = new Uint8Array(memory, index * size, size);
   finalizationGroup.register(buffer, index);
@@ -90,7 +91,7 @@ function allocate(allocator) {
 This code uses a few features of the `FinalizationGroup` API:
 - An object can have a finalizer referenced by calling the `register` method of `FinalizationGroup`. In this case, two arguments are passed to the `register` method:
   - The object whose lifetime we're concerned with. Here, that's the `Uint8Array`
-  - A "holdings" value, which is used to represent that object when cleaning it up in the finalizer. In this case, the holdings are an integer corresponding to the offset within the `WebAssembly.Memory` object.
+  - A “holdings” value, which is used to represent that object when cleaning it up in the finalizer. In this case, the holdings are an integer corresponding to the offset within the `WebAssembly.Memory` object.
 - The `FinalizationGroup` constructor is called with a callback as an argument. This callback is called with an iterator of the holdings values.
 
 The finalizer callback is called *after* the object is garbage collected, a pattern which is sometimes called "post-mortem". For this reason, a separate "holdings" value is put in the iterator, rather than the original object--the object's already gone, so it can't be used.
@@ -99,7 +100,7 @@ The `FinalizationGroup` callback is passed an iterator of holdings to give that 
 
 ### Releasing external resources as a backstop
 
-Another use case is running custom clean-up code after Finalization use case: e.g. file handle: run some code once a file is no longer in use, in case nothing points to it anymore. Note, it's still encouraged to use an explicit method call to clean up the resource; this is just a backup.
+Another use case is running custom clean-up code after Finalization use case: e.g. file handle: run some code once a file is no longer in use, in case nothing points to it anymore. Note, it’s still encouraged to use an explicit method call to clean up the resource; this is just a backup.
 
 ```js
 class FileStream {
@@ -143,9 +144,10 @@ for (const data of fs) {
 fs.close();
 ```
 
-Note, it's not a good idea to *depend* on the `FinalizationGroup` ever calling the cleanup action, as this is inherently unreliable, as described at the beginning of this README. However, it can be a reasonable fallback to handle the case where a resource was dropped on the floor due to a bug. If nothing references the file anymore, no one is going to close it! Just try not to rely on it.
+Note, it’s not a good idea to *depend* on the `FinalizationGroup` ever calling the cleanup action, as this is inherently unreliable, as described at the beginning of this README. However, it can be a reasonable fallback to handle the case where a resource was dropped on the floor due to a bug. If nothing references the file anymore, no one is going to close it! Just try not to rely on it.
 
 This code uses an additional feature of finalizers: unregistration. It works like this:
+
 - When registering the `FileStream` instance with the finalization group, a third argument is passed: the unregistration token.
 - The `FinalizationGroup.prototype.unregister` method is passed the unregistration token.
 - Afterwards, the cleanup callback is never called with the holdings of this `FileStream`.
@@ -165,10 +167,10 @@ Finalizers can help prevent memory leaks. [Comlink](https://github.com/GoogleChr
 In the initial example from this README, a cache can use `WeakRef` to point to large `ArrayBuffer`s to allow them to be garbage collected, but still reused when available. To allow the cache *keys* to be deleted when they are no longer in use, a `FinalizationGroup` can register a callback to delete the `Map` entries, as follows:
 
 ```js
-let cache = new Map();
-let finalizationGroup = new FinalizationGroup(iterator => {
+const cache = new Map();
+const finalizationGroup = new FinalizationGroup(iterator => {
   for (const name of iterator) {
-    let ref = cache.get(name);
+    const ref = cache.get(name);
     if (ref !== undefined) {
       if (ref.deref() === undefined) {
         cache.delete(name);
@@ -184,7 +186,7 @@ function getImageCached(name) {
       return deref;
     }
   }
-  let image = getImage(name);
+  const image = getImage(name);
   ref = new WeakRef(image);
   cache.set(name, ref);
   finalizationGroup.register(image, name);
@@ -303,7 +305,7 @@ for (const key of map.keys()) {
 // key: {"b":2}
 ```
 
-Remember to be cautious with use of powerful constructs like this iterable WeakMap. Web APIs designed with semantics analogous to these are widely considered to be legacy mistakes. It's best to avoid exposing garbage collection timing in your applications, and to use weak references and finalizers sparingly, e.g., for cases which help reduce memory usage.
+Remember to be cautious with use of powerful constructs like this iterable WeakMap. Web APIs designed with semantics analogous to these are widely considered to be legacy mistakes. It’s best to avoid exposing garbage collection timing in your applications, and to use weak references and finalizers sparingly, e.g., for cases which help reduce memory usage.
 
 ## Historical documents
 
