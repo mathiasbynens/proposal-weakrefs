@@ -58,7 +58,7 @@ A few elements of the API are visible in this example:
   - The object passed into the constructor, if it's still available
   - `undefined`, if nothing else was pointing to the object and it was already garbage collected
 
-### Finalizers
+## Finalizers
 
 _Finalization_ is the execution of code to clean up after an object that has become unreachable to program execution. User-defined _finalizers_ enable several new use cases, and can help prevent memory leaks.
 
